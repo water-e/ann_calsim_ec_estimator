@@ -1,0 +1,53 @@
+name: anntraining
+channels:
+  - conda-forge
+  - nodefaults
+  - cadwr-dms
+dependencies:
+  - python==3.9 # 3.9 is max for tensorflow 2.7.4
+  - pip
+  - ipykernel
+  #- tensorflow # [version='>=2.1']
+  #- tensorflow==2.7.4
+  - vtools3>=3.7.5
+  - dms-datastore>=0.1.0 
+  - numpy>=1.20,<2  
+  - pandas>=2    
+  - scikit-learn
+  - keras
+  #- keras-tuner
+  - tabulate
+  - pandas
+  - openpyxl
+  - xlrd # [version='>=1.0.0']
+  - statsmodels
+  - bokeh
+  - hvplot
+  - holoviews
+  - panel
+  - pyhecdss
+  - ipykernel
+  - openpyxl==3.1.0
+
+# pip install --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org tensorflow==2.7.4
+# pip install --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org keras-tuner
+
+
+
+## The cluster below not needed  
+# Install the following with command line
+#  pip install -e git+https://github.com/CADWRDeltaModeling/pydelmod#egg=pydelmod
+#  pip install -e git+https://github.com/CADWRDeltaModeling/pydsm#egg=pydsm
+# #condpip install --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org openpyxl==3.1.0
+
+
+
+
+  
+# Install the following with command line
+#  pip install -e git+https://github.com/CADWRDeltaModeling/pydelmod#egg=pydelmod
+#  pip install -e git+https://github.com/CADWRDeltaModeling/pydsm#egg=pydsm
+
+# pip install --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org tensorflow
+# pip install --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org keras-tuner
+# pip install --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org openpyxl==3.1.0

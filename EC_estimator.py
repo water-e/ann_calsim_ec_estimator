@@ -3,21 +3,20 @@ import pandas as pd
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.layers import Dense, Input
-from tensorflow.keras.layers.experimental.preprocessing import Normalization, IntegerLookup #CategoryEncoding
+from tensorflow.keras.layers.experimental.preprocessing import Normalization, IntegerLookup, Rescaling #CategoryEncoding
 from tensorflow.keras.models import Model
 from sklearn.metrics import r2_score, mean_squared_error
 import matplotlib.pyplot as plt
 import os
 
 
-num_feature_dims = {"sac" : 18, 
-                    "exports" : 18, 
-                    "dcc": 18, 
-                    "net_dcd" : 18, 
-                    "sjr": 18, 
-                    "tide" : 18, 
-                    "smscg" : 18}
+global num_feature_dims
 
+def set_num_feature_dims(d):
+    global num_feature_dims
+    num_feature_dims = d
+
+# this is kludgy and needs to be populated by a call to calc_lags_feature
 lags_feature = None
 
 root_logdir = os.path.join(os.curdir, "tf_training_logs")
@@ -30,8 +29,34 @@ def root_mean_squared_error(y_true, y_pred):
     y_true = tf.cast(y_true, tf.float32)
     return tf.keras.backend.sqrt(tf.keras.backend.mean(tf.keras.backend.square(y_pred - y_true)))
 
+def days_to_ops(ser):
+    pass
+
+def block_history(series,maxday=7,nblock=10,blocksize=11):
+    df = series.to_frame()
+    base_name = df.columns[0]
+    tups = [(base_name,"0d")]
+    for iday in range(1,(maxday+1)):
+        lagname = f"{iday}d"
+        df[f"{base_name}_{lagname}"] = series.shift(iday)
+        tups.append((base_name,lagname))
+
+    past = series.shift(maxday)
+    past = past.rolling(blocksize).mean()
+    for iday in range(1,(nblock+1)):
+        lagname = f"{iday}ave"
+        df[f"{base_name}_{lagname}"] = past.shift((iday-1)*blocksize+1)
+        tups.append((base_name,lagname))
+    indices = pd.MultiIndex.from_tuples(tups,names=["var","lag"])
+    df.columns = indices
+    return df
+
 def load_data(file_name):
-    return pd.read_csv(file_name)
+    df = pd.read_csv(file_name)
+    cols = df.columns
+    old = cols[0] 
+    df = df.rename({old: 'date'},axis=1)
+    return df
 
 def split_data(df, train_rows, test_rows):
     df_train = df.tail(train_rows)
@@ -42,7 +67,7 @@ def split_data(df, train_rows, test_rows):
 def build_model_inputs(df):
     inputs = []
     for feature,fdim in num_feature_dims.items():
-        feature_input = Input(shape=(fdim,), name=f"{feature}_input")
+        feature_input = Input(shape=(fdim,), name=f"{feature}")
         inputs.append(feature_input)
     return inputs
 
@@ -81,16 +106,36 @@ def df_by_variable(df):
  
     ndx = pd.MultiIndex.from_tuples(indextups, names=('var', 'lag'))
     df.columns = ndx
-    calc_lags_feature(df)
-    return df
 
-def preprocessing_layers(df_var, inputs):
+    # This is a side effect. Maybe improve to function
+    calc_lags_feature(df)
+    names = feature_names()
+    if "EC" in df.columns.get_level_values(0):
+        names = names + ["EC"]
+    df2=df.reindex(names,axis="columns",level="var")
+    
+    df2.index=df.date
+
+    return df2
+
+def preprocessing_layers(df_var, inputs,thresh=None):
+    global lags_feature
     layers = []
     for fndx,feature in enumerate(feature_names()):
-
+        if lags_feature is None: raise ValueError("lags_feature not calculated yet")
+        #print(f"feature: {feature}, lags_feature: {lags_feature[feature]}")
         station_df = df_var.loc[:, pd.IndexSlice[feature,lags_feature[feature]]]
-        feature_layer = Normalization()
-        feature_layer.adapt(station_df.values.reshape(-1, num_feature_dims[feature]))  
+        if feature in ["dcc","smscg"] and False:
+            feature_layer = Normalization(axis=None) #Rescaling(1.0)
+        elif feature == 'sac' and thresh is not None:
+            feature_layer = Rescaling(1/thresh)  #Normalization(axis=None)
+        else:
+            feature_layer = Normalization(axis=None)
+            feature_layer.adapt(station_df.values.reshape(-1, num_feature_dims[feature]))  
+            #print("Creating feature")
+            #print(feature_layer.mean)
+            #print(np.sqrt(feature_layer.variance))
+            #print(feature)        
         layers.append(feature_layer(inputs[fndx]))
     return layers
 
@@ -120,32 +165,35 @@ def build_model(layers, inputs):
     x = tf.keras.layers.BatchNormalization(name="batch_normalize")(x)
     
     # Output layer with 1 neuron
-    output = Dense(units=1,name="emm_ec",activation="relu")(x)
+    output = Dense(units=1,name="ec",activation="relu")(x)
     ann = Model(inputs = inputs, outputs = output)
 
     ann.compile(
         optimizer=tf.keras.optimizers.Adamax(learning_rate=0.001), 
         loss=root_mean_squared_error, 
-        metrics=['mean_absolute_error']
+        metrics=['mean_absolute_error'],
+        run_eagerly=True
     )
     
     return ann, tensorboard_cb
 
 
 
-def train_model(model, tensorboard_cb, X_train, y_train, X_test, y_test):
+def train_model(model, tensorboard_cb, X_train, y_train, X_test, y_test,nepoch=100):
+    tf.config.run_functions_eagerly(True)
+    tf.data.experimental.enable_debug_mode()
     history = model.fit(
         X_train, y_train, 
         validation_data=(X_test, y_test), 
         callbacks=[tf.keras.callbacks.EarlyStopping(
             monitor="val_loss", 
-            patience=1000, 
+            patience=min(nepoch,1000), 
             mode="min", 
             restore_best_weights=True), 
             tensorboard_cb
         ], 
         batch_size=128, 
-        epochs=100, 
+        epochs=nepoch, 
         verbose=0
     )
     return history, model
@@ -182,10 +230,13 @@ def plot_history(history):
     plt.figure(figsize=(10, 5))
     plt.plot(history.history['loss'], label='Training Loss')
     plt.plot(history.history['val_loss'], label='Validation Loss')
+    print(len(history.history['loss']))
     plt.title('Training and Validation Loss Over Epochs')
     plt.ylabel('Loss')
     plt.xlabel('Epoch')
     plt.legend(loc='upper right')
+    #plt.ylim(0,4)
+    #plt.xlim(0,80)
     plt.show()
 
 def save_model(model, model_save_path):
